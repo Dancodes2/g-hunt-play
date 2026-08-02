@@ -22,14 +22,18 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Resolve release tag
         id: release
         shell: bash
         run: |
+          set -euo pipefail
+
           if [ "${{ github.event_name }}" = "release" ]; then
             printf 'tag=%s\n' "${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
           else
@@ -41,16 +45,49 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          set -euo pipefail
+
           mkdir -p release site
-          gh release download "${{ steps.release.outputs.tag }}" \
+
+          RELEASE_TAG="${{ steps.release.outputs.tag }}"
+
+          echo "Downloading compiled build from release: $RELEASE_TAG"
+
+          gh release download "$RELEASE_TAG" \
             --repo "${{ github.repository }}" \
-            --pattern "g-hunt-web.zip" \
+            --pattern "g-hunt-web*.zip" \
             --dir release
-          unzip -q release/g-hunt-web.zip -d site
+
+          mapfile -t archives < <(
+            find release \
+              -maxdepth 1 \
+              -type f \
+              -name "g-hunt-web*.zip" \
+              -print
+          )
+
+          if [ "${#archives[@]}" -eq 0 ]; then
+            echo "No compiled G Hunt Web archive was downloaded." >&2
+            exit 1
+          fi
+
+          if [ "${#archives[@]}" -ne 1 ]; then
+            echo "Expected exactly one compiled archive, but found:" >&2
+            printf '%s\n' "${archives[@]}" >&2
+            exit 1
+          fi
+
+          ARCHIVE="${archives[0]}"
+
+          echo "Using release asset: $ARCHIVE"
+
+          unzip -q "$ARCHIVE" -d site
 
       - name: Validate Pages artifact root
         shell: bash
         run: |
+          set -euo pipefail
+
           required=(
             site/index.html
             site/index.js
@@ -64,6 +101,7 @@ jobs:
             site/.nojekyll
             site/LICENSE
           )
+
           for path in "${required[@]}"; do
             test -f "$path" || {
               echo "Missing required file: $path" >&2
@@ -72,10 +110,13 @@ jobs:
           done
 
           pck_size="$(stat -c%s site/index.pck)"
+
           test "$pck_size" -gt 1048576 || {
             echo "index.pck looks truncated: $pck_size bytes" >&2
             exit 1
           }
+
+          echo "Validated index.pck size: $pck_size bytes"
 
           if find site \( \
             -path "site/.git" -o \
@@ -98,6 +139,7 @@ jobs:
             -name "export_presets.cfg" \
           \) | grep -q .; then
             echo "Forbidden source/development files found in Pages artifact:" >&2
+
             find site \( \
               -path "site/.git" -o \
               -path "site/.git/*" -o \
@@ -118,8 +160,11 @@ jobs:
               -name "project.godot" -o \
               -name "export_presets.cfg" \
             \) | sort >&2
+
             exit 1
           fi
+
+          echo "Pages artifact validation passed."
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
