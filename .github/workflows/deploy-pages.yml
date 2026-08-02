@@ -1,0 +1,134 @@
+name: Deploy G Hunt Pages Artifact
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to deploy or roll back to"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            printf 'tag=%s\n' "${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            printf 'tag=%s\n' "${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download compiled build release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p release site
+          gh release download "${{ steps.release.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --pattern "g-hunt-web.zip" \
+            --dir release
+          unzip -q release/g-hunt-web.zip -d site
+
+      - name: Validate Pages artifact root
+        shell: bash
+        run: |
+          required=(
+            site/index.html
+            site/index.js
+            site/index.wasm
+            site/index.pck
+            site/index.icon.png
+            site/index.apple-touch-icon.png
+            site/index.png
+            site/index.audio.worklet.js
+            site/index.audio.position.worklet.js
+            site/.nojekyll
+            site/LICENSE
+          )
+          for path in "${required[@]}"; do
+            test -f "$path" || {
+              echo "Missing required file: $path" >&2
+              exit 1
+            }
+          done
+
+          pck_size="$(stat -c%s site/index.pck)"
+          test "$pck_size" -gt 1048576 || {
+            echo "index.pck looks truncated: $pck_size bytes" >&2
+            exit 1
+          }
+
+          if find site \( \
+            -path "site/.git" -o \
+            -path "site/.git/*" -o \
+            -path "site/.codex" -o \
+            -path "site/.codex/*" -o \
+            -path "site/.agents" -o \
+            -path "site/.agents/*" -o \
+            -path "site/scripts" -o \
+            -path "site/scripts/*" -o \
+            -path "site/scenes" -o \
+            -path "site/scenes/*" -o \
+            -path "site/docs" -o \
+            -path "site/docs/*" -o \
+            -path "site/data" -o \
+            -path "site/data/*" -o \
+            -name "*.gd" -o \
+            -name "*.tscn" -o \
+            -name "project.godot" -o \
+            -name "export_presets.cfg" \
+          \) | grep -q .; then
+            echo "Forbidden source/development files found in Pages artifact:" >&2
+            find site \( \
+              -path "site/.git" -o \
+              -path "site/.git/*" -o \
+              -path "site/.codex" -o \
+              -path "site/.codex/*" -o \
+              -path "site/.agents" -o \
+              -path "site/.agents/*" -o \
+              -path "site/scripts" -o \
+              -path "site/scripts/*" -o \
+              -path "site/scenes" -o \
+              -path "site/scenes/*" -o \
+              -path "site/docs" -o \
+              -path "site/docs/*" -o \
+              -path "site/data" -o \
+              -path "site/data/*" -o \
+              -name "*.gd" -o \
+              -name "*.tscn" -o \
+              -name "project.godot" -o \
+              -name "export_presets.cfg" \
+            \) | sort >&2
+            exit 1
+          fi
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
