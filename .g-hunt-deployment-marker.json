@@ -1,8 +1,8 @@
 {
-  "archive_size": 173882477,
-  "created_at_utc": "2026-08-02T08:53:21Z",
-  "index_pck_size": 164189208,
+  "archive_size": 173876120,
+  "created_at_utc": "2026-08-02T09:21:48Z",
+  "index_pck_size": 164189224,
   "purpose": "Force a fresh GitHub Pages build version for the compiled G Hunt release artifact.",
   "release_asset": "g-hunt-web.zip",
-  "release_tag": "web-build-20260802-085317"
+  "release_tag": "web-build-20260802-092146"
 }
